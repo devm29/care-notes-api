@@ -137,3 +137,40 @@ async def create_test_data(num_notes: int = 100000):
 
     print(f"Successfully inserted {num_notes} care notes!")
 
+# Original inefficient implementation
+async def get_daily_care_stats(
+    db: AsyncSession,
+    tenant_id: int,
+    facility_ids: Optional[List[int]] = None,
+    date: Optional[datetime] = None
+):
+    if date is None:
+        date = datetime.utcnow()
+
+    # Current inefficient query
+    base_query = select(CareNote).where(
+        CareNote.tenant_id == tenant_id,
+        func.date(CareNote.created_at) == date.date()
+    )
+
+    if facility_ids:
+        base_query = base_query.where(CareNote.facility_id.in_(facility_ids))
+
+    notes = (await db.execute(base_query)).scalars().all()
+
+    # Inefficient in-memory processing
+    stats = {
+        "total_notes": len(notes),
+        "by_category": {},
+        "by_priority": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+        "by_facility": {},
+        "avg_notes_per_patient": 0
+    }
+
+    for note in notes:
+        stats["by_category"][note.category] = stats["by_category"].get(note.category, 0) + 1
+        stats["by_priority"][note.priority] += 1
+        stats["by_facility"][note.facility_id] = stats["by_facility"].get(note.facility_id, 0) + 1
+
+    return stats
+
