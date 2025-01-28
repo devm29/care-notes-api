@@ -174,3 +174,103 @@ async def get_daily_care_stats(
 
     return stats
 
+# Optimized implementation using SQL aggregations
+async def get_daily_care_stats_optimized(
+    db: AsyncSession,
+    tenant_id: int,
+    facility_ids: Optional[List[int]] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """Optimized version using SQL aggregations and single query."""
+    if start_date is None:
+        start_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    if end_date is None:
+        end_date = datetime.utcnow().replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    print(f"Calculating stats for tenant {tenant_id}, facilities {facility_ids}, date range: {start_date} to {end_date}")
+
+    # Build base filter conditions
+    filters = [
+        CareNote.tenant_id == tenant_id,
+        CareNote.created_at >= start_date,
+        CareNote.created_at <= end_date
+    ]
+
+    if facility_ids:
+        filters.append(CareNote.facility_id.in_(facility_ids))
+
+    print(f"Using filters: {filters}")
+
+    # Multiple optimized queries (SQLite doesn't support GROUPING SETS)
+    # Get total count and unique patients
+    total_query = (
+        select(
+            func.count(CareNote.id).label('total_notes'),
+            func.count(func.distinct(CareNote.patient_id)).label('unique_patients')
+        )
+        .where(and_(*filters))
+    )
+    total_result = (await db.execute(total_query)).first()
+    print(f"Total query result: {total_result}")
+
+    # Get counts by category
+    category_query = (
+        select(
+            CareNote.category,
+            func.count(CareNote.id).label('count')
+        )
+        .where(and_(*filters))
+        .group_by(CareNote.category)
+    )
+    category_results = (await db.execute(category_query)).all()
+    print(f"Category results: {category_results}")
+
+    # Get counts by priority
+    priority_query = (
+        select(
+            CareNote.priority,
+            func.count(CareNote.id).label('count')
+        )
+        .where(and_(*filters))
+        .group_by(CareNote.priority)
+    )
+    priority_results = (await db.execute(priority_query)).all()
+    print(f"Priority results: {priority_results}")
+
+    # Get counts by facility
+    facility_query = (
+        select(
+            CareNote.facility_id,
+            func.count(CareNote.id).label('count')
+        )
+        .where(and_(*filters))
+        .group_by(CareNote.facility_id)
+    )
+    facility_results = (await db.execute(facility_query)).all()
+    print(f"Facility results: {facility_results}")
+
+    # Build stats
+    stats = {
+        "total_notes": total_result.total_notes or 0,
+        "by_category": {row.category: row.count for row in category_results},
+        "by_priority": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+        "by_facility": {row.facility_id: row.count for row in facility_results},
+        "avg_notes_per_patient": 0,
+        "date_range": {
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat()
+        }
+    }
+
+    # Update priority counts
+    for row in priority_results:
+        stats["by_priority"][row.priority] = row.count
+
+    # Calculate average notes per patient
+    if total_result.unique_patients and total_result.unique_patients > 0:
+        stats["avg_notes_per_patient"] = round(stats["total_notes"] / total_result.unique_patients, 2)
+
+    print(f"Returning stats: {stats}")
+    return stats
+
