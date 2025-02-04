@@ -274,3 +274,84 @@ async def get_daily_care_stats_optimized(
     print(f"Returning stats: {stats}")
     return stats
 
+# Performance testing function
+async def run_performance_test(num_iterations: int = 10, concurrent_requests: int = 5):
+    """Compare performance of original vs optimized query."""
+    print("\n=== Performance Test Results ===\n")
+
+    # Test parameters
+    test_tenant_id = 1
+    test_facility_ids = [11, 12, 13, 14, 15]  # Facilities for tenant 1
+    # Use a date 5 days ago to ensure we have data
+    test_date = datetime.utcnow() - timedelta(days=5)
+
+    # Test original implementation
+    print("Testing ORIGINAL implementation...")
+    original_times = []
+
+    async def run_original():
+        async with async_session_maker() as db:
+            start = time.time()
+            await get_daily_care_stats(db, test_tenant_id, test_facility_ids, test_date)
+            end = time.time()
+            return end - start
+
+    # Sequential test for original
+    for i in range(num_iterations):
+        exec_time = await run_original()
+        original_times.append(exec_time)
+
+    # Concurrent test for original
+    concurrent_original_start = time.time()
+    tasks = [run_original() for _ in range(concurrent_requests)]
+    await asyncio.gather(*tasks)
+    concurrent_original_time = time.time() - concurrent_original_start
+
+    # Test optimized implementation
+    print("\nTesting OPTIMIZED implementation...")
+    optimized_times = []
+
+    async def run_optimized():
+        async with async_session_maker() as db:
+            start = time.time()
+            await get_daily_care_stats_optimized(db, test_tenant_id, test_facility_ids, test_date, test_date)
+            end = time.time()
+            return end - start
+
+    # Sequential test for optimized
+    for i in range(num_iterations):
+        exec_time = await run_optimized()
+        optimized_times.append(exec_time)
+
+    # Concurrent test for optimized
+    concurrent_optimized_start = time.time()
+    tasks = [run_optimized() for _ in range(concurrent_requests)]
+    await asyncio.gather(*tasks)
+    concurrent_optimized_time = time.time() - concurrent_optimized_start
+
+    # Calculate metrics
+    avg_original = sum(original_times) / len(original_times)
+    avg_optimized = sum(optimized_times) / len(optimized_times)
+    improvement = ((avg_original - avg_optimized) / avg_original) * 100
+
+    # Get sample stats to show record count
+    async with async_session_maker() as db:
+        sample_stats = await get_daily_care_stats(db, test_tenant_id, test_facility_ids, test_date)
+        print(f"\nProcessing {sample_stats['total_notes']} records for date: {test_date.date()}")
+
+    # Print results
+    print("\n--- Sequential Performance ---")
+    print(f"Original avg time: {avg_original:.4f}s")
+    print(f"Optimized avg time: {avg_optimized:.4f}s")
+    print(f"Performance improvement: {improvement:.1f}%")
+    print(f"Speed up: {avg_original/avg_optimized:.2f}x faster")
+
+    print("\n--- Concurrent Performance ---")
+    print(f"Original ({concurrent_requests} concurrent): {concurrent_original_time:.4f}s")
+    print(f"Optimized ({concurrent_requests} concurrent): {concurrent_optimized_time:.4f}s")
+    print(f"Concurrent improvement: {((concurrent_original_time - concurrent_optimized_time) / concurrent_original_time * 100):.1f}%")
+
+    print("\n--- Resource Efficiency ---")
+    print(f"Original: Loads all records into memory")
+    print(f"Optimized: SQL aggregation (minimal memory usage)")
+
