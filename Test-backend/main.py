@@ -355,3 +355,75 @@ async def run_performance_test(num_iterations: int = 10, concurrent_requests: in
     print(f"Original: Loads all records into memory")
     print(f"Optimized: SQL aggregation (minimal memory usage)")
 
+# API Endpoints
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+    await create_test_data(100000)
+
+@app.get("/api/care-stats")
+async def get_care_stats(
+    tenant_id: int,
+    facility_ids: Optional[str] = None,
+    range: str = "today",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    optimized: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get care statistics for a tenant within a date range."""
+    print(f"Received stats request - tenant_id: {tenant_id}, facility_ids: {facility_ids}, range: {range}")
+
+    # Parse facility IDs
+    facility_id_list = None
+    if facility_ids:
+        try:
+            facility_id_list = [int(x.strip()) for x in facility_ids.split(",") if x.strip()]
+            print(f"Parsed facility IDs: {facility_id_list}")
+        except ValueError as e:
+            print(f"Error parsing facility IDs: {e}")
+            raise HTTPException(status_code=400, detail="Invalid facility IDs format")
+
+    # Calculate date range
+    now = datetime.utcnow()
+    start = None
+    end = None
+
+    if start_date and end_date:
+        # Use custom date range if provided
+        try:
+            start = datetime.fromisoformat(start_date)
+            end = datetime.fromisoformat(end_date)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="Invalid date format")
+    else:
+        # Use predefined ranges
+        end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+        if range == "today":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif range == "this_week":
+            start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        elif range == "this_month":
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif range == "this_year":
+            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif range == "all_time":
+            start = datetime.min
+            end = datetime.max
+        else:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+
+    try:
+        stats = await get_daily_care_stats_optimized(db, tenant_id, facility_id_list, start, end)
+        print(f"Returning stats response: {stats}")
+        return stats
+    except Exception as e:
+        print(f"Error getting stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/run-performance-test")
+async def run_perf_test():
+    """Run performance comparison test."""
+    await run_performance_test()
+    return {"message": "Performance test completed. Check console for results."}
+
