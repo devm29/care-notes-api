@@ -427,3 +427,53 @@ async def run_perf_test():
     await run_performance_test()
     return {"message": "Performance test completed. Check console for results."}
 
+@app.get("/api/care-notes")
+async def get_care_notes(
+    tenant_id: Optional[int] = None,
+    facility_ids: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get care notes with pagination and optional filtering."""
+    # Calculate offset
+    offset = (page - 1) * page_size
+
+    # Build base query
+    query = select(CareNote).order_by(CareNote.created_at.desc())
+
+    # Add filters
+    if tenant_id is not None:
+        query = query.where(CareNote.tenant_id == tenant_id)
+
+    if facility_ids:
+        facility_id_list = [int(id) for id in facility_ids.split(',')]
+        query = query.where(CareNote.facility_id.in_(facility_id_list))
+
+    # Add pagination
+    query = query.offset(offset).limit(page_size)
+
+    # Execute query
+    result = await db.execute(query)
+    notes = result.scalars().all()
+
+    # Get total count for pagination
+    count_query = select(func.count()).select_from(CareNote)
+    if tenant_id is not None:
+        count_query = count_query.where(CareNote.tenant_id == tenant_id)
+    if facility_ids:
+        count_query = count_query.where(CareNote.facility_id.in_(facility_id_list))
+
+    total_count = await db.scalar(count_query)
+    total_pages = (total_count + page_size - 1) // page_size
+
+    return {
+        "notes": notes,
+        "pagination": {
+            "total": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages
+        }
+    }
+
