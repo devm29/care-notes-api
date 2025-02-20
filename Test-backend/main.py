@@ -477,3 +477,23 @@ async def get_care_notes(
         }
     }
 
+@app.post("/api/care-notes")
+async def create_care_note(
+    note: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new care note."""
+    # Set defaults if not provided
+    note.setdefault('tenant_id', 1)
+    note.setdefault('facility_id', 1)
+    note.setdefault('created_at', datetime.utcnow())
+
+    db_note = CareNote(**note)
+    db.add(db_note)
+    await db.commit()
+    await db.refresh(db_note)
+    return db_note
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
